@@ -17,7 +17,7 @@ import (
 )
 
 // New returns an implementation of the chaincode interface
-func New() *GeneralQuerier {
+func New() shim.Chaincode {
 	return &GeneralQuerier{}
 }
 
