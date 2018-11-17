@@ -1,0 +1,13 @@
+# Copyright Greg Haskins All Rights Reserved
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+FROM _BASE_NS_:_BASE_TAG_
+ENV FABRIC_CFG_PATH /etc/hyperledger/fabric
+RUN mkdir -p /var/hyperledger/production $FABRIC_CFG_PATH /opt/lib /tmp/scripts
+COPY payload/gscc.so /opt/lib
+COPY payload/peer /usr/local/bin
+ADD  payload/sampleconfig.tar.bz2 $FABRIC_CFG_PATH
+ADD  payload/scripts.tar.bz2 /tmp/scripts
+RUN  /tmp/scripts/init.sh && /tmp/scripts/cleanup.sh && rm -rf /tmp/scripts
+CMD ["peer","node","start"]
