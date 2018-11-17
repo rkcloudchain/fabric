@@ -67,7 +67,6 @@ $(BUILD_DIR)/image/%/payload:
 $(BUILD_DIR)/image/peer/Dockerfile: plugins/gscc/images/peer/Dockerfile.in
 	mkdir -p $(@D)
 	@cat $< \
-		| sed -e 's|_BASE_NS_|$(BASE_DOCKER_NS)|g' \
 		| sed -e 's|_BASE_TAG_|$(BASE_DOCKER_TAG)|g' \
 		> $@
 

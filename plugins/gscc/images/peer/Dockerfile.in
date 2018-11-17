@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-FROM _BASE_NS_:_BASE_TAG_
+FROM buildpack-deps:_BASE_TAG_
 ENV FABRIC_CFG_PATH /etc/hyperledger/fabric
 RUN mkdir -p /var/hyperledger/production $FABRIC_CFG_PATH /opt/lib /tmp/scripts
 COPY payload/gscc.so /opt/lib
