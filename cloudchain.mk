@@ -9,7 +9,8 @@ BASE_DOCKER_LABEL = org.hyperledger.fabric
 
 BUILD_DIR ?= .build
 DOCKER_NS ?= cloudchain
-BASE_DOCKER_NS = buildpack-deps
+HYPERLEDGER_DOCKER_NS ?= hyperledger
+BASE_DOCKER_NS ?= hyperledger
 BASE_DOCKER_TAG = xenial
 ARCH=$(shell go env GOARCH)
 EXTRA_VERSION ?= $(shell git rev-parse --short HEAD)
@@ -25,7 +26,7 @@ METADATA_VAR = Version=$(BASE_VERSION)
 METADATA_VAR += CommitSHA=$(EXTRA_VERSION)
 METADATA_VAR += BaseVersion=$(BASEIMAGE_RELEASE)
 METADATA_VAR += BaseDockerLabel=$(BASE_DOCKER_LABEL)
-METADATA_VAR += DockerNamespace=$(DOCKER_NS)
+METADATA_VAR += DockerNamespace=$(HYPERLEDGER_DOCKER_NS)
 METADATA_VAR += BaseDockerNamespace=$(BASE_DOCKER_NS)
 METADATA_VAR += Experimental=$(EXPERIMENTAL)
 
