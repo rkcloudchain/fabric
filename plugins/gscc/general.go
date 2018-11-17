@@ -47,8 +47,8 @@ func (s *GeneralQuerier) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 	if len(args) < 2 {
 		return shim.Error(fmt.Sprintf("Incorrect number of arguments, %d", len(args)))
 	}
-	chaincodeID := string(args[0])
-	fname := string(args[1])
+	fname := string(args[0])
+	chaincodeID := string(args[1])
 
 	targetLedger := peer.GetLedger(cid)
 	if targetLedger == nil {
