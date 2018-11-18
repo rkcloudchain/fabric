@@ -186,6 +186,8 @@ func (s *GeneralQuerier) handleQueryStateClose(cid string, txid, iterID []byte) 
 	iterctx := s.IteratorContexts.Get(cid, string(txid))
 	if iterctx != nil {
 		iterctx.Cleanup(string(iterID))
+	} else {
+		logger.Warnf("Can't find any IteratorContext with %s(%s)", cid, txid)
 	}
 	s.IteratorContexts.Delete(cid, string(txid))
 
