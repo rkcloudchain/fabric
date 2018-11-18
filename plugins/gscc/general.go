@@ -80,6 +80,8 @@ func (s *GeneralQuerier) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 		if err != nil {
 			return shim.Error(fmt.Sprintf("Failed to get QueryExecutor with cid %s, error %s", cid, err))
 		}
+		defer executor.Done()
+
 		return s.handleGetState(executor, args[1], args[2])
 
 	case GetHistoryForKey:
