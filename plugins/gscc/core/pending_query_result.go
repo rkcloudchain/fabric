@@ -14,11 +14,11 @@ import (
 
 // PendingQueryResult ...
 type PendingQueryResult struct {
-	batch []*protos.QueryResultBytes
+	batch []*protos.RangeQueryResultBytes
 }
 
 // Cut ...
-func (p *PendingQueryResult) Cut() []*protos.QueryResultBytes {
+func (p *PendingQueryResult) Cut() []*protos.RangeQueryResultBytes {
 	batch := p.batch
 	p.batch = nil
 	return batch
@@ -31,7 +31,7 @@ func (p *PendingQueryResult) Add(queryResult commonledger.QueryResult) error {
 		logger.Errorf("failed to marshal query result: %s", err)
 		return err
 	}
-	p.batch = append(p.batch, &protos.QueryResultBytes{ResultBytes: queryResultBytes})
+	p.batch = append(p.batch, &protos.RangeQueryResultBytes{ResultBytes: queryResultBytes})
 	return nil
 }
 

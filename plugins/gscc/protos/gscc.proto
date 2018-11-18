@@ -10,12 +10,12 @@ package protos;
 option java_package = "org.hyperledger.fabric.plugins.gscc.protos";
 option go_package = "github.com/hyperledger/fabric/plugins/gscc/protos";
 
-message QueryResultBytes {
+message RangeQueryResultBytes {
 	bytes resultBytes = 1;
 }
 
-message QueryResponse {
-	repeated QueryResultBytes results = 1;
+message RangeQueryResponse {
+	repeated RangeQueryResultBytes results = 1;
 	bool has_more = 2;
 	string id = 3;
 	string tx_id = 4;
