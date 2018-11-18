@@ -21,7 +21,7 @@ type QueryResponseGenerator struct {
 
 // Build takes an iterator and fetch state to construct QueryResponse
 func (q *QueryResponseGenerator) Build(iterContext *IteratorContext, iter commonledger.ResultsIterator,
-	txid, iterID string, totalReturnLimit int32) (*protos.QueryResponse, error) {
+	txid, iterID string, totalReturnLimit int32) (*protos.RangeQueryResponse, error) {
 
 	pendingQueryResults := iterContext.GetPendingQueryResult(iterID)
 	totalReturnCount := iterContext.GetTotalReturnCount(iterID)
@@ -48,7 +48,7 @@ func (q *QueryResponseGenerator) Build(iterContext *IteratorContext, iter common
 				return nil, err
 			}
 			*totalReturnCount++
-			return &protos.QueryResponse{Results: batch, HasMore: true, Id: iterID, TxId: txid}, nil
+			return &protos.RangeQueryResponse{Results: batch, HasMore: true, Id: iterID, TxId: txid}, nil
 
 		default:
 			if err := pendingQueryResults.Add(queryResult); err != nil {
@@ -60,8 +60,8 @@ func (q *QueryResponseGenerator) Build(iterContext *IteratorContext, iter common
 	}
 }
 
-func createQueryResponse(iterContext *IteratorContext, txid, iterID string, pendingQueryResults *PendingQueryResult, totalReturnCount int32) *protos.QueryResponse {
+func createQueryResponse(iterContext *IteratorContext, txid, iterID string, pendingQueryResults *PendingQueryResult, totalReturnCount int32) *protos.RangeQueryResponse {
 	batch := pendingQueryResults.Cut()
 	iterContext.Cleanup(iterID)
-	return &protos.QueryResponse{Results: batch, HasMore: false, Id: iterID, TxId: txid}
+	return &protos.RangeQueryResponse{Results: batch, HasMore: false, Id: iterID, TxId: txid}
 }
