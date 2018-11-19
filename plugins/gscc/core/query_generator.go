@@ -15,22 +15,15 @@ import (
 var logger = flogging.MustGetLogger("gscc/core")
 
 // QueryResponseGenerator ...
-type QueryResponseGenerator struct {
-	MaxResultLimit int
-}
+type QueryResponseGenerator struct{}
 
 // Build takes an iterator and fetch state to construct QueryResponse
 func (q *QueryResponseGenerator) Build(iterContext *IteratorContext, iter commonledger.ResultsIterator,
-	txid, iterID string, totalReturnLimit int32) (*protos.RangeQueryResponse, error) {
+	txid, iterID string) (*protos.RangeQueryResponse, error) {
 
 	pendingQueryResults := iterContext.GetPendingQueryResult(iterID)
-	totalReturnCount := iterContext.GetTotalReturnCount(iterID)
 
 	for {
-		if *totalReturnCount >= totalReturnLimit {
-			return createQueryResponse(iterContext, txid, iterID, pendingQueryResults, *totalReturnCount), nil
-		}
-
 		queryResult, err := iter.Next()
 		switch {
 		case err != nil:
@@ -39,28 +32,18 @@ func (q *QueryResponseGenerator) Build(iterContext *IteratorContext, iter common
 			return nil, err
 
 		case queryResult == nil:
-			return createQueryResponse(iterContext, txid, iterID, pendingQueryResults, *totalReturnCount), nil
-
-		case pendingQueryResults.Size() == q.MaxResultLimit:
-			batch := pendingQueryResults.Cut()
-			if err := pendingQueryResults.Add(queryResult); err != nil {
-				iterContext.Cleanup(iterID)
-				return nil, err
-			}
-			*totalReturnCount++
-			return &protos.RangeQueryResponse{Results: batch, HasMore: true, Id: iterID, TxId: txid}, nil
+			return createQueryResponse(iterContext, txid, iterID, pendingQueryResults), nil
 
 		default:
 			if err := pendingQueryResults.Add(queryResult); err != nil {
 				iterContext.Cleanup(iterID)
 				return nil, err
 			}
-			*totalReturnCount++
 		}
 	}
 }
 
-func createQueryResponse(iterContext *IteratorContext, txid, iterID string, pendingQueryResults *PendingQueryResult, totalReturnCount int32) *protos.RangeQueryResponse {
+func createQueryResponse(iterContext *IteratorContext, txid, iterID string, pendingQueryResults *PendingQueryResult) *protos.RangeQueryResponse {
 	batch := pendingQueryResults.Cut()
 	iterContext.Cleanup(iterID)
 	return &protos.RangeQueryResponse{Results: batch, HasMore: false, Id: iterID, TxId: txid}
