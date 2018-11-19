@@ -17,6 +17,7 @@ type IteratorContext struct {
 	mutex               sync.Mutex
 	queryIteratorMap    map[string]commonledger.ResultsIterator
 	pendingQueryResults map[string]*PendingQueryResult
+	totalReturnCount    map[string]*int32
 }
 
 // Initialize ...
@@ -30,9 +31,14 @@ func (c *IteratorContext) Initialize(queryID string, iter commonledger.ResultsIt
 	if c.pendingQueryResults == nil {
 		c.pendingQueryResults = make(map[string]*PendingQueryResult)
 	}
+	if c.totalReturnCount == nil {
+		c.totalReturnCount = make(map[string]*int32)
+	}
 
 	c.queryIteratorMap[queryID] = iter
 	c.pendingQueryResults[queryID] = &PendingQueryResult{}
+	zeroValue := int32(0)
+	c.totalReturnCount[queryID] = &zeroValue
 }
 
 // GetQueryIterator ...
@@ -51,6 +57,14 @@ func (c *IteratorContext) GetPendingQueryResult(queryID string) *PendingQueryRes
 	return result
 }
 
+// GetTotalReturnCount ...
+func (c *IteratorContext) GetTotalReturnCount(queryID string) *int32 {
+	c.mutex.Lock()
+	result := c.totalReturnCount[queryID]
+	c.mutex.Unlock()
+	return result
+}
+
 // Cleanup ...
 func (c *IteratorContext) Cleanup(queryID string) {
 	c.mutex.Lock()
@@ -62,4 +76,5 @@ func (c *IteratorContext) Cleanup(queryID string) {
 	}
 	delete(c.queryIteratorMap, queryID)
 	delete(c.pendingQueryResults, queryID)
+	delete(c.totalReturnCount, queryID)
 }
