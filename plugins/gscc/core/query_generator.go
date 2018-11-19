@@ -28,7 +28,7 @@ func (q *QueryResponseGenerator) Build(iterContext *IteratorContext, iter common
 
 	for {
 		if *totalReturnCount >= totalReturnLimit {
-			return createQueryResponse(iterContext, txid, iterID, pendingQueryResults, *totalReturnCount), nil
+			return createQueryResponse(iterContext, txid, iterID, pendingQueryResults), nil
 		}
 
 		queryResult, err := iter.Next()
@@ -39,7 +39,7 @@ func (q *QueryResponseGenerator) Build(iterContext *IteratorContext, iter common
 			return nil, err
 
 		case queryResult == nil:
-			return createQueryResponse(iterContext, txid, iterID, pendingQueryResults, *totalReturnCount), nil
+			return createQueryResponse(iterContext, txid, iterID, pendingQueryResults), nil
 
 		case pendingQueryResults.Size() == q.MaxResultLimit:
 			batch := pendingQueryResults.Cut()
@@ -60,7 +60,7 @@ func (q *QueryResponseGenerator) Build(iterContext *IteratorContext, iter common
 	}
 }
 
-func createQueryResponse(iterContext *IteratorContext, txid, iterID string, pendingQueryResults *PendingQueryResult, totalReturnCount int32) *protos.RangeQueryResponse {
+func createQueryResponse(iterContext *IteratorContext, txid, iterID string, pendingQueryResults *PendingQueryResult) *protos.RangeQueryResponse {
 	batch := pendingQueryResults.Cut()
 	iterContext.Cleanup(iterID)
 	return &protos.RangeQueryResponse{Results: batch, HasMore: false, Id: iterID, TxId: txid}
