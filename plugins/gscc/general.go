@@ -15,6 +15,7 @@ import (
 	"github.com/hyperledger/fabric/core/chaincode"
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/core/ledger/ledgerconfig"
 	"github.com/hyperledger/fabric/core/peer"
 	"github.com/hyperledger/fabric/plugins/gscc/core"
 	pb "github.com/hyperledger/fabric/protos/peer"
@@ -26,7 +27,7 @@ func New() shim.Chaincode {
 	return &GeneralQuerier{
 		UUIDGenerator:        chaincode.UUIDGeneratorFunc(util.GenerateUUID),
 		IteratorContexts:     core.NewIteratorContexts(),
-		QueryResponseBuilder: &core.QueryResponseGenerator{},
+		QueryResponseBuilder: &core.QueryResponseGenerator{MaxResultLimit: 100},
 	}
 }
 
@@ -135,9 +136,10 @@ func (s *GeneralQuerier) handleGetHistoryForKey(executor ledger.HistoryQueryExec
 		return shim.Error(fmt.Sprintf("Failed to get history iterator with namespace %s, error %s", ccid, err))
 	}
 
+	totalReturnLimit := calculateTotalReturnLimit()
 	iterctx.Initialize(iterID, historyIter)
 
-	payload, err := s.QueryResponseBuilder.Build(iterctx, historyIter, tid, iterID)
+	payload, err := s.QueryResponseBuilder.Build(iterctx, historyIter, tid, iterID, totalReturnLimit)
 	if err != nil {
 		iterctx.Cleanup(iterID)
 		return shim.Error(fmt.Sprintf("Failed to get payload with %s(%s/%s), error %s", iterID, cid, tid, err))
@@ -165,7 +167,8 @@ func (s *GeneralQuerier) handleQueryStateNext(cid string, txid, iterID []byte) p
 		return shim.Error("query iterator not found")
 	}
 
-	payload, err := s.QueryResponseBuilder.Build(iterctx, queryIter, string(txid), string(iterID))
+	totalReturnLimit := calculateTotalReturnLimit()
+	payload, err := s.QueryResponseBuilder.Build(iterctx, queryIter, string(txid), string(iterID), totalReturnLimit)
 	if err != nil {
 		iterctx.Cleanup(string(iterID))
 		return shim.Error(fmt.Sprintf("Failed to get payload with %s(%s/%s), error %s", string(iterID), cid, string(txid), err))
@@ -191,6 +194,10 @@ func (s *GeneralQuerier) handleQueryStateClose(cid string, txid, iterID []byte) 
 	s.IteratorContexts.Delete(cid, string(txid))
 
 	return shim.Success(nil)
+}
+
+func calculateTotalReturnLimit() int32 {
+	return int32(ledgerconfig.GetTotalQueryLimit())
 }
 
 func main() {}
