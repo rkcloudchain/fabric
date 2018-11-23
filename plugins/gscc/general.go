@@ -61,10 +61,14 @@ func (s *GeneralQuerier) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 	logger.Infof("Channel ID: %s", cid)
 
 	args := stub.GetArgs()
-	if len(args) < 2 {
+	if len(args) < 1 {
 		return shim.Error(fmt.Sprintf("Incorrect number of arguments, %d", len(args)))
 	}
 	fname := string(args[0])
+
+	if len(args) < 3 {
+		return shim.Error(fmt.Sprintf("missing 2nd and 3rd argument for %s", fname))
+	}
 
 	targetLedger := peer.GetLedger(cid)
 	if targetLedger == nil {
@@ -73,37 +77,15 @@ func (s *GeneralQuerier) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 
 	switch fname {
 	case GetState:
-		if len(args) < 3 {
-			return shim.Error(fmt.Sprintf("missing 3rd argument for %s", fname))
-		}
-		executor, err := targetLedger.NewQueryExecutor()
-		if err != nil {
-			return shim.Error(fmt.Sprintf("Failed to get QueryExecutor with cid %s, error %s", cid, err))
-		}
-		defer executor.Done()
-
-		return s.handleGetState(executor, args[1], args[2])
+		return s.handleGetState(targetLedger, cid, args[1], args[2])
 
 	case GetHistoryForKey:
-		if len(args) < 3 {
-			return shim.Error(fmt.Sprintf("missing 3rd argument for %s", fname))
-		}
-		historyExecutor, err := targetLedger.NewHistoryQueryExecutor()
-		if err != nil {
-			return shim.Error(fmt.Sprintf("Failed to get QueryExecutor with cid %s, error %s", cid, err))
-		}
-		return s.handleGetHistoryForKey(historyExecutor, cid, stub.GetTxID(), args[1], args[2])
+		return s.handleGetHistoryForKey(targetLedger, cid, stub.GetTxID(), args[1], args[2])
 
 	case QueryStateClose:
-		if len(args) < 3 {
-			return shim.Error(fmt.Sprintf("missing 3rd argument for %s", fname))
-		}
 		return s.handleQueryStateClose(cid, args[1], args[2])
 
 	case QueryStateNext:
-		if len(args) < 3 {
-			return shim.Error(fmt.Sprintf("missing 3rd argument for %s", fname))
-		}
 		return s.handleQueryStateNext(cid, args[1], args[2])
 	}
 
@@ -111,10 +93,15 @@ func (s *GeneralQuerier) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 }
 
 // Handles query to ledger to get state
-func (s *GeneralQuerier) handleGetState(executor ledger.QueryExecutor, ccid, key []byte) pb.Response {
+func (s *GeneralQuerier) handleGetState(vledger ledger.PeerLedger, cid string, ccid, key []byte) pb.Response {
 	if key == nil {
 		return shim.Error("State key must not be nil")
 	}
+	executor, err := vledger.NewQueryExecutor()
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to get QueryExecutor with cid %s, error %s", cid, err))
+	}
+	defer executor.Done()
 
 	value, err := executor.GetState(string(ccid), string(key))
 	if err != nil {
@@ -124,7 +111,12 @@ func (s *GeneralQuerier) handleGetState(executor ledger.QueryExecutor, ccid, key
 }
 
 // Handles query to ledger history db
-func (s *GeneralQuerier) handleGetHistoryForKey(executor ledger.HistoryQueryExecutor, cid, tid string, ccid, key []byte) pb.Response {
+func (s *GeneralQuerier) handleGetHistoryForKey(vledger ledger.PeerLedger, cid, tid string, ccid, key []byte) pb.Response {
+	executor, err := vledger.NewHistoryQueryExecutor()
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to get QueryExecutor with cid %s, error %s", cid, err))
+	}
+
 	iterctx, err := s.IteratorContexts.Create(cid, tid)
 	if err != nil {
 		return shim.Error(fmt.Sprintf("Failed to create IteratorContext with %s(%s), error: %s", cid, tid, err))
