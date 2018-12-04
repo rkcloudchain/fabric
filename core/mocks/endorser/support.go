@@ -94,6 +94,11 @@ func (s *MockSupport) IsSysCC(name string) bool {
 	return s.IsSysCCRv
 }
 
+// Launch starts executing chaincode if it is not already running
+func (s *MockSupport) Launch(name, version string, cds *pb.ChaincodeDeploymentSpec) error {
+	return s.ExecuteCDSError
+}
+
 func (s *MockSupport) ExecuteLegacyInit(txParams *ccprovider.TransactionParams, cid, name, version, txid string, signedProp *pb.SignedProposal, prop *pb.Proposal, spec *pb.ChaincodeDeploymentSpec) (*pb.Response, *pb.ChaincodeEvent, error) {
 	return s.ExecuteCDSResp, s.ExecuteCDSEvent, s.ExecuteCDSError
 }

@@ -678,6 +678,11 @@ func (fake *Support) ExecuteReturnsOnCall(i int, result1 *pb.Response, result2 *
 	}{result1, result2, result3}
 }
 
+// Launch starts executing chaincode if it is not already running
+func (fake *Support) Launch(name, version string, cds *pb.ChaincodeDeploymentSpec) error {
+	return nil
+}
+
 func (fake *Support) ExecuteLegacyInit(txParams *ccprovider.TransactionParams, cid string, name string, version string, txid string, signedProp *pb.SignedProposal, prop *pb.Proposal, spec *pb.ChaincodeDeploymentSpec) (*pb.Response, *pb.ChaincodeEvent, error) {
 	fake.executeLegacyInitMutex.Lock()
 	ret, specificReturn := fake.executeLegacyInitReturnsOnCall[len(fake.executeLegacyInitArgsForCall)]

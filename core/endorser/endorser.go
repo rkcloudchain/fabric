@@ -29,6 +29,12 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	lsccInstall = "install"
+	lsccDeploy  = "deploy"
+	lsccUpgrade = "upgrade"
+)
+
 var endorserLogger = flogging.MustGetLogger("endorser")
 
 // The Jira issue that documents Endorser flow along with its relationship to
@@ -58,6 +64,9 @@ type Support interface {
 	// IsSysCC returns true if the name matches a system chaincode's
 	// system chaincode names are system, chain wide
 	IsSysCC(name string) bool
+
+	// Launch starts executing chaincode if it is not already running
+	Launch(name, version string, cds *pb.ChaincodeDeploymentSpec) error
 
 	// Execute - execute proposal, return original response of chaincode
 	Execute(txParams *ccprovider.TransactionParams, cid, name, version, txid string, signedProp *pb.SignedProposal, prop *pb.Proposal, input *pb.ChaincodeInput) (*pb.Response, *pb.ChaincodeEvent, error)
@@ -159,26 +168,45 @@ func (e *Endorser) callChaincode(txParams *ccprovider.TransactionParams, version
 	//
 	// NOTE that if there's an error all simulation, including the chaincode
 	// table changes in lscc will be thrown away
-	if cid.Name == "lscc" && len(input.Args) >= 3 && (string(input.Args[0]) == "deploy" || string(input.Args[0]) == "upgrade") {
-		userCDS, err := putils.GetChaincodeDeploymentSpec(input.Args[2], e.PlatformRegistry)
-		if err != nil {
-			return nil, nil, err
+	if cid.Name == "lscc" {
+		function := string(input.Args[0])
+		var cdsBytes []byte
+
+		if len(input.Args) >= 3 && (function == lsccDeploy || function == lsccUpgrade) {
+			cdsBytes = input.Args[2]
+		} else if len(input.Args) >= 2 && function == lsccInstall {
+			cdsBytes = input.Args[1]
 		}
 
-		var cds *pb.ChaincodeDeploymentSpec
-		cds, err = e.SanitizeUserCDS(userCDS)
-		if err != nil {
-			return nil, nil, err
-		}
+		if len(cdsBytes) > 0 {
+			userCDS, err := putils.GetChaincodeDeploymentSpec(cdsBytes, e.PlatformRegistry)
+			if err != nil {
+				return nil, nil, err
+			}
 
-		// this should not be a system chaincode
-		if e.s.IsSysCC(cds.ChaincodeSpec.ChaincodeId.Name) {
-			return nil, nil, errors.Errorf("attempting to deploy a system chaincode %s/%s", cds.ChaincodeSpec.ChaincodeId.Name, txParams.ChannelID)
-		}
+			var cds *pb.ChaincodeDeploymentSpec
+			cds, err = e.SanitizeUserCDS(userCDS)
+			if err != nil {
+				return nil, nil, err
+			}
 
-		_, _, err = e.s.ExecuteLegacyInit(txParams, txParams.ChannelID, cds.ChaincodeSpec.ChaincodeId.Name, cds.ChaincodeSpec.ChaincodeId.Version, txParams.TxID, txParams.SignedProp, txParams.Proposal, cds)
-		if err != nil {
-			return nil, nil, err
+			// this should not be a system chaincode
+			if e.s.IsSysCC(cds.ChaincodeSpec.ChaincodeId.Name) {
+				return nil, nil, errors.Errorf("attempting to %s a system chaincode %s/%s", function, cds.ChaincodeSpec.ChaincodeId.Name, txParams.ChannelID)
+			}
+
+			switch function {
+			case lsccDeploy, lsccUpgrade:
+				_, _, err = e.s.ExecuteLegacyInit(txParams, txParams.ChannelID, cds.ChaincodeSpec.ChaincodeId.Name, cds.ChaincodeSpec.ChaincodeId.Version, txParams.TxID, txParams.SignedProp, txParams.Proposal, cds)
+				if err != nil {
+					return nil, nil, err
+				}
+			case lsccInstall:
+				err = e.s.Launch(cds.ChaincodeSpec.ChaincodeId.Name, cds.ChaincodeSpec.ChaincodeId.Version, cds)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
 		}
 	}
 	// ----- END -------
@@ -186,6 +214,7 @@ func (e *Endorser) callChaincode(txParams *ccprovider.TransactionParams, version
 	return res, ccevent, err
 }
 
+// SanitizeUserCDS ...
 func (e *Endorser) SanitizeUserCDS(userCDS *pb.ChaincodeDeploymentSpec) (*pb.ChaincodeDeploymentSpec, error) {
 	fsCDS, err := e.s.GetChaincodeDeploymentSpecFS(userCDS)
 	if err != nil {

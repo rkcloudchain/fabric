@@ -38,6 +38,7 @@ type SupportImpl struct {
 	ACLProvider      aclmgmt.ACLProvider
 }
 
+// NewQueryCreator ...
 func (s *SupportImpl) NewQueryCreator(channel string) (QueryCreator, error) {
 	lgr := s.Peer.GetLedger(channel)
 	if lgr == nil {
@@ -46,6 +47,7 @@ func (s *SupportImpl) NewQueryCreator(channel string) (QueryCreator, error) {
 	return lgr, nil
 }
 
+// SigningIdentityForRequest ...
 func (s *SupportImpl) SigningIdentityForRequest(*pb.SignedProposal) (SigningIdentity, error) {
 	return s.SignerSupport, nil
 }
@@ -111,7 +113,7 @@ func (s *SupportImpl) IsSysCC(name string) bool {
 	return s.SysCCProvider.IsSysCC(name)
 }
 
-// GetChaincode returns the CCPackage from the fs
+// GetChaincodeDeploymentSpecFS returns the CCPackage from the fs
 func (s *SupportImpl) GetChaincodeDeploymentSpecFS(cds *pb.ChaincodeDeploymentSpec) (*pb.ChaincodeDeploymentSpec, error) {
 	ccpack, err := ccprovider.GetChaincodeFromFS(cds.ChaincodeSpec.ChaincodeId.Name, cds.ChaincodeSpec.ChaincodeId.Version)
 	if err != nil {
@@ -121,7 +123,14 @@ func (s *SupportImpl) GetChaincodeDeploymentSpecFS(cds *pb.ChaincodeDeploymentSp
 	return ccpack.GetDepSpec(), nil
 }
 
-// ExecuteInit a deployment proposal and return the chaincode response
+// Launch starts executing chaincode if it is not already running
+func (s *SupportImpl) Launch(name, version string, cds *pb.ChaincodeDeploymentSpec) error {
+	ccci := ccprovider.DeploymentSpecToChaincodeContainerInfo(cds)
+	ccci.Version = version
+	return s.ChaincodeSupport.LaunchInit(ccci)
+}
+
+// ExecuteLegacyInit a deployment proposal and return the chaincode response
 func (s *SupportImpl) ExecuteLegacyInit(txParams *ccprovider.TransactionParams, cid, name, version, txid string, signedProp *pb.SignedProposal, prop *pb.Proposal, cds *pb.ChaincodeDeploymentSpec) (*pb.Response, *pb.ChaincodeEvent, error) {
 	cccid := &ccprovider.CCContext{
 		Name:    name,
