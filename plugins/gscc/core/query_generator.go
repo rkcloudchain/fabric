@@ -12,7 +12,7 @@ import (
 	"github.com/hyperledger/fabric/plugins/gscc/protos"
 )
 
-var logger = flogging.MustGetLogger("gscc/core")
+var logger = flogging.MustGetLogger("gscc.core")
 
 // QueryResponseGenerator ...
 type QueryResponseGenerator struct {
