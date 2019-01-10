@@ -3,8 +3,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-BASE_VERSION = 1.3.1
-BASEIMAGE_RELEASE=0.4.13
+BASE_VERSION = 1.4.0
+BASEIMAGE_RELEASE=0.4.14
 BASE_DOCKER_LABEL = org.hyperledger.fabric
 
 BUILD_DIR ?= .build
