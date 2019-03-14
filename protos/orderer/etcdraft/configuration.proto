@@ -29,12 +29,13 @@ message Consenter {
 // Options to be specified for all the etcd/raft nodes. These can be modified on a
 // per-channel basis.
 message Options {
-	uint64 tick_interval = 1; // specified in miliseconds
+	string tick_interval = 1; // time duration format, e.g. 500ms
 	uint32 election_tick = 2;
 	uint32 heartbeat_tick = 3;
 	uint32 max_inflight_msgs = 4;
 	uint64 max_size_per_msg = 5;
-	uint64 snapshot_interval = 6; // take snapshot every n blocks
+	// Take snapshot when cumulative data exceeds certain size in bytes.
+	uint32 snapshot_interval = 6;
 }
 
 // RaftMetadata stores data used by the Raft OSNs when
@@ -47,8 +48,6 @@ message RaftMetadata {
     // Carries the Raft ID value that will be assigned
     // to the next OSN that will join this cluster.
     uint64 next_consenter_id = 2;
-    // Raft cluster configurations count
-    uint64 conf_change_counts = 3;
     // Index of etcd/raft entry for current block.
-    uint64 raft_index = 4;
+    uint64 raft_index = 3;
 }

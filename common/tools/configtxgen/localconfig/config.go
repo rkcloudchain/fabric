@@ -185,20 +185,21 @@ var genesisDefaults = TopLevel{
 		Addresses:    []string{"127.0.0.1:7050"},
 		BatchTimeout: 2 * time.Second,
 		BatchSize: BatchSize{
-			MaxMessageCount:   10,
+			MaxMessageCount:   500,
 			AbsoluteMaxBytes:  10 * 1024 * 1024,
-			PreferredMaxBytes: 512 * 1024,
+			PreferredMaxBytes: 2 * 1024 * 1024,
 		},
 		Kafka: Kafka{
 			Brokers: []string{"127.0.0.1:9092"},
 		},
 		EtcdRaft: &etcdraft.Metadata{
 			Options: &etcdraft.Options{
-				TickInterval:    100,
-				ElectionTick:    10,
-				HeartbeatTick:   1,
-				MaxInflightMsgs: 256,
-				MaxSizePerMsg:   1048576,
+				TickInterval:     "500ms",
+				ElectionTick:     10,
+				HeartbeatTick:    1,
+				MaxInflightMsgs:  5,
+				MaxSizePerMsg:    1048576,
+				SnapshotInterval: 100 * 1024 * 1024, // 100MB
 			},
 		},
 	},
@@ -403,7 +404,7 @@ loop:
 	second_loop:
 		for {
 			switch {
-			case ord.EtcdRaft.Options.TickInterval == 0:
+			case ord.EtcdRaft.Options.TickInterval == "":
 				logger.Infof("Orderer.EtcdRaft.Options.TickInterval unset, setting to %v", genesisDefaults.Orderer.EtcdRaft.Options.TickInterval)
 				ord.EtcdRaft.Options.TickInterval = genesisDefaults.Orderer.EtcdRaft.Options.TickInterval
 
@@ -423,12 +424,20 @@ loop:
 				logger.Infof("Orderer.EtcdRaft.Options.MaxSizePerMsg unset, setting to %v", genesisDefaults.Orderer.EtcdRaft.Options.MaxSizePerMsg)
 				ord.EtcdRaft.Options.MaxSizePerMsg = genesisDefaults.Orderer.EtcdRaft.Options.MaxSizePerMsg
 
+			case ord.EtcdRaft.Options.SnapshotInterval == 0:
+				logger.Infof("Orderer.EtcdRaft.Options.SnapshotInterval unset, setting to %v", genesisDefaults.Orderer.EtcdRaft.Options.SnapshotInterval)
+				ord.EtcdRaft.Options.SnapshotInterval = genesisDefaults.Orderer.EtcdRaft.Options.SnapshotInterval
+
 			case len(ord.EtcdRaft.Consenters) == 0:
 				logger.Panicf("%s configuration did not specify any consenter", etcdraft.TypeKey)
 
 			default:
 				break second_loop
 			}
+		}
+
+		if _, err := time.ParseDuration(ord.EtcdRaft.Options.TickInterval); err != nil {
+			logger.Panicf("Etcdraft TickInterval (%s) must be in time duration format", ord.EtcdRaft.Options.TickInterval)
 		}
 
 		// validate the specified members for Options

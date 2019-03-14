@@ -9,9 +9,11 @@ package etcdraft
 import (
 	"bytes"
 	"encoding/pem"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
 
-	"github.com/coreos/etcd/raft"
-	"github.com/coreos/etcd/raft/raftpb"
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/configtx"
@@ -24,6 +26,8 @@ import (
 	"github.com/hyperledger/fabric/protos/orderer/etcdraft"
 	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/pkg/errors"
+	"go.etcd.io/etcd/raft"
+	"go.etcd.io/etcd/raft/raftpb"
 )
 
 // MembershipChanges keeps information about membership
@@ -34,15 +38,30 @@ type MembershipChanges struct {
 	TotalChanges uint32
 }
 
+// Stringer implements fmt.Stringer interface
+func (mc *MembershipChanges) String() string {
+	return fmt.Sprintf("add %d node(s), remove %d node(s)", len(mc.AddedNodes), len(mc.RemovedNodes))
+}
+
 // UpdateRaftMetadataAndConfChange given the membership changes and RaftMetadata method calculates
 // updates to be applied to the raft  cluster configuration in addition updates mapping between
-// consenter and its id within metadata
-func (mc *MembershipChanges) UpdateRaftMetadataAndConfChange(raftMetadata *etcdraft.RaftMetadata) *raftpb.ConfChange {
+// consenter and its id within metadata. Adding and removing a node at the same time is considered
+// to be certificate rotation, and the ID of rotated node is returned.
+func (mc *MembershipChanges) UpdateRaftMetadataAndConfChange(raftMetadata *etcdraft.RaftMetadata) (cc *raftpb.ConfChange, rotate uint64) {
 	if mc == nil || mc.TotalChanges == 0 {
-		return nil
+		return nil, 0
 	}
 
 	var confChange *raftpb.ConfChange
+
+	if len(mc.AddedNodes) == 1 && len(mc.RemovedNodes) == 1 {
+		for id, node := range raftMetadata.Consenters {
+			if bytes.Equal(mc.RemovedNodes[0].ClientTlsCert, node.ClientTlsCert) {
+				raftMetadata.Consenters[id] = mc.AddedNodes[0]
+				return nil, id
+			}
+		}
+	}
 
 	// producing corresponding raft configuration changes
 	if len(mc.AddedNodes) > 0 {
@@ -50,12 +69,10 @@ func (mc *MembershipChanges) UpdateRaftMetadataAndConfChange(raftMetadata *etcdr
 		raftMetadata.Consenters[nodeID] = mc.AddedNodes[0]
 		raftMetadata.NextConsenterId++
 		confChange = &raftpb.ConfChange{
-			ID:     raftMetadata.ConfChangeCounts,
 			NodeID: nodeID,
 			Type:   raftpb.ConfChangeAddNode,
 		}
-		raftMetadata.ConfChangeCounts++
-		return confChange
+		return confChange, 0
 	}
 
 	if len(mc.RemovedNodes) > 0 {
@@ -64,18 +81,16 @@ func (mc *MembershipChanges) UpdateRaftMetadataAndConfChange(raftMetadata *etcdr
 				if bytes.Equal(c.ClientTlsCert, node.ClientTlsCert) {
 					delete(raftMetadata.Consenters, nodeID)
 					confChange = &raftpb.ConfChange{
-						ID:     raftMetadata.ConfChangeCounts,
 						NodeID: nodeID,
 						Type:   raftpb.ConfChangeRemoveNode,
 					}
-					raftMetadata.ConfChangeCounts++
 					break
 				}
 			}
 		}
 	}
 
-	return confChange
+	return confChange, 0
 }
 
 // EndpointconfigFromFromSupport extracts TLS CA certificates and endpoints from the ConsenterSupport
@@ -97,31 +112,9 @@ func lastConfigBlockFromSupport(support consensus.ConsenterSupport) (*common.Blo
 	if lastBlock == nil {
 		return nil, errors.Errorf("unable to retrieve block %d", lastBlockSeq)
 	}
-	lastConfigBlock, err := LastConfigBlock(lastBlock, support)
+	lastConfigBlock, err := cluster.LastConfigBlock(lastBlock, support)
 	if err != nil {
 		return nil, err
-	}
-	return lastConfigBlock, nil
-}
-
-// LastConfigBlock returns the last config block relative to the given block.
-func LastConfigBlock(block *common.Block, support consensus.ConsenterSupport) (*common.Block, error) {
-	if block == nil {
-		return nil, errors.New("nil block")
-	}
-	if support == nil {
-		return nil, errors.New("nil support")
-	}
-	if block.Metadata == nil || len(block.Metadata.Metadata) <= int(common.BlockMetadataIndex_LAST_CONFIG) {
-		return nil, errors.New("no metadata in block")
-	}
-	lastConfigBlockNum, err := utils.GetLastConfigIndexFromBlock(block)
-	if err != nil {
-		return nil, err
-	}
-	lastConfigBlock := support.Block(lastConfigBlockNum)
-	if lastConfigBlock == nil {
-		return nil, errors.Errorf("unable to retrieve last config block %d", lastConfigBlockNum)
 	}
 	return lastConfigBlock, nil
 }
@@ -129,9 +122,9 @@ func LastConfigBlock(block *common.Block, support consensus.ConsenterSupport) (*
 // newBlockPuller creates a new block puller
 func newBlockPuller(support consensus.ConsenterSupport,
 	baseDialer *cluster.PredicateDialer,
-	clusterConfig localconfig.Cluster) (*cluster.BlockPuller, error) {
+	clusterConfig localconfig.Cluster) (BlockPuller, error) {
 
-	verifyBlockSequence := func(blocks []*common.Block) error {
+	verifyBlockSequence := func(blocks []*common.Block, _ string) error {
 		return cluster.VerifyBlocks(blocks, support)
 	}
 
@@ -159,7 +152,7 @@ func newBlockPuller(support consensus.ConsenterSupport,
 			string(secureConfig.SecOpts.Certificate))
 	}
 
-	return &cluster.BlockPuller{
+	bp := &cluster.BlockPuller{
 		VerifyBlockSequence: verifyBlockSequence,
 		Logger:              flogging.MustGetLogger("orderer.common.cluster.puller"),
 		RetryTimeout:        clusterConfig.ReplicationRetryTimeout,
@@ -170,6 +163,12 @@ func newBlockPuller(support consensus.ConsenterSupport,
 		TLSCert:             der.Bytes,
 		Channel:             support.ChainID(),
 		Dialer:              stdDialer,
+	}
+
+	return &LedgerBlockPuller{
+		Height:         support.Height,
+		BlockRetriever: support,
+		BlockPuller:    bp,
 	}, nil
 }
 
@@ -229,6 +228,36 @@ func ComputeMembershipChanges(oldConsenters map[uint64]*etcdraft.Consenter, newC
 	return result
 }
 
+// MetadataHasDuplication returns an error if the metadata has duplication of consenters.
+// A duplication is defined by having a server or a client TLS certificate that is found
+// in two different consenters, regardless of the type of certificate (client/server).
+func MetadataHasDuplication(md *etcdraft.Metadata) error {
+	if md == nil {
+		return errors.New("nil metadata")
+	}
+
+	for _, consenter := range md.Consenters {
+		if consenter == nil {
+			return errors.New("nil consenter in metadata")
+		}
+	}
+
+	seen := make(map[string]struct{})
+	for _, consenter := range md.Consenters {
+		serverKey := string(consenter.ServerTlsCert)
+		clientKey := string(consenter.ClientTlsCert)
+		_, duplicateServerCert := seen[serverKey]
+		_, duplicateClientCert := seen[clientKey]
+		if duplicateServerCert || duplicateClientCert {
+			return errors.Errorf("duplicate consenter: server cert: %s, client cert: %s", serverKey, clientKey)
+		}
+
+		seen[serverKey] = struct{}{}
+		seen[clientKey] = struct{}{}
+	}
+	return nil
+}
+
 // MetadataFromConfigValue reads and translates configuration updates from config value into raft metadata
 func MetadataFromConfigValue(configValue *common.ConfigValue) (*etcdraft.Metadata, error) {
 	consensusTypeValue := &orderer.ConsensusType{}
@@ -254,7 +283,23 @@ func MetadataFromConfigUpdate(update *common.ConfigUpdate) (*etcdraft.Metadata, 
 	return nil, nil
 }
 
-// ConfigEnvelopeFromBlock extracts configuration envelop from the block based on the
+// ConfigChannelHeader expects a config block and returns the header type
+// of the config envelope wrapped in it, e.g. HeaderType_ORDERER_TRANSACTION
+func ConfigChannelHeader(block *common.Block) (hdr *common.ChannelHeader, err error) {
+	envelope, err := utils.ExtractEnvelope(block, 0)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to extract envelope from the block")
+	}
+
+	channelHeader, err := utils.ChannelHeader(envelope)
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot extract channel header")
+	}
+
+	return channelHeader, nil
+}
+
+// ConfigEnvelopeFromBlock extracts configuration envelope from the block based on the
 // config type, i.e. HeaderType_ORDERER_TRANSACTION or HeaderType_CONFIG
 func ConfigEnvelopeFromBlock(block *common.Block) (*common.Envelope, error) {
 	if block == nil {
@@ -263,7 +308,7 @@ func ConfigEnvelopeFromBlock(block *common.Block) (*common.Envelope, error) {
 
 	envelope, err := utils.ExtractEnvelope(block, 0)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to extract envelop from the block")
+		return nil, errors.Wrapf(err, "failed to extract envelope from the block")
 	}
 
 	channelHeader, err := utils.ChannelHeader(envelope)
@@ -307,7 +352,7 @@ func ConsensusMetadataFromConfigBlock(block *common.Block) (*etcdraft.Metadata, 
 
 	payload, err := utils.ExtractPayload(configEnvelope)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed extract payload from config envelope")
+		return nil, errors.Wrap(err, "failed to extract payload from config envelope")
 	}
 	// get config update
 	configUpdate, err := configtx.UnmarshalConfigUpdateFromPayload(payload)
@@ -316,27 +361,6 @@ func ConsensusMetadataFromConfigBlock(block *common.Block) (*etcdraft.Metadata, 
 	}
 
 	return MetadataFromConfigUpdate(configUpdate)
-}
-
-// IsMembershipUpdate checks whenever block is config block and carries
-// raft cluster membership updates
-func IsMembershipUpdate(block *common.Block, currentMetadata *etcdraft.RaftMetadata) (bool, error) {
-	if !utils.IsConfigBlock(block) {
-		return false, nil
-	}
-
-	metadata, err := ConsensusMetadataFromConfigBlock(block)
-	if err != nil {
-		return false, errors.Wrap(err, "error reading consensus metadata")
-	}
-
-	if metadata != nil {
-		changes := ComputeMembershipChanges(currentMetadata.Consenters, metadata.Consenters)
-
-		return changes.TotalChanges > 0, nil
-	}
-
-	return false, nil
 }
 
 // ConsenterCertificate denotes a TLS certificate of a consenter
@@ -372,4 +396,193 @@ func (conCert ConsenterCertificate) IsConsenterOfChannel(configBlock *common.Blo
 		}
 	}
 	return cluster.ErrNotInChannel
+}
+
+// SliceOfConsentersIDs converts maps of consenters into slice of consenters ids
+func SliceOfConsentersIDs(consenters map[uint64]*etcdraft.Consenter) []uint64 {
+	result := make([]uint64, 0)
+	for id := range consenters {
+		result = append(result, id)
+	}
+
+	return result
+}
+
+// NodeExists returns trues if node id exists in the slice
+// and false otherwise
+func NodeExists(id uint64, nodes []uint64) bool {
+	for _, nodeID := range nodes {
+		if nodeID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// ConfChange computes Raft configuration changes based on current Raft configuration state and
+// consenters mapping stored in RaftMetadata
+func ConfChange(raftMetadata *etcdraft.RaftMetadata, confState *raftpb.ConfState) *raftpb.ConfChange {
+	raftConfChange := &raftpb.ConfChange{}
+
+	// need to compute conf changes to propose
+	if len(confState.Nodes) < len(raftMetadata.Consenters) {
+		// adding new node
+		raftConfChange.Type = raftpb.ConfChangeAddNode
+		for consenterID := range raftMetadata.Consenters {
+			if NodeExists(consenterID, confState.Nodes) {
+				continue
+			}
+			raftConfChange.NodeID = consenterID
+		}
+	} else {
+		// removing node
+		raftConfChange.Type = raftpb.ConfChangeRemoveNode
+		consentersIDs := SliceOfConsentersIDs(raftMetadata.Consenters)
+		for _, nodeID := range confState.Nodes {
+			if NodeExists(nodeID, consentersIDs) {
+				continue
+			}
+			raftConfChange.NodeID = nodeID
+		}
+	}
+
+	return raftConfChange
+}
+
+// PeriodicCheck checks periodically a condition, and reports
+// the cumulative consecutive period the condition was fulfilled.
+type PeriodicCheck struct {
+	Logger              *flogging.FabricLogger
+	CheckInterval       time.Duration
+	Condition           func() bool
+	Report              func(cumulativePeriod time.Duration)
+	conditionHoldsSince time.Time
+	once                sync.Once // Used to prevent double initialization
+	stopped             uint32
+}
+
+// Run runs the PeriodicCheck
+func (pc *PeriodicCheck) Run() {
+	pc.once.Do(pc.check)
+}
+
+// Stop stops the periodic checks
+func (pc *PeriodicCheck) Stop() {
+	pc.Logger.Info("Periodic check is stopping.")
+	atomic.AddUint32(&pc.stopped, 1)
+}
+
+func (pc *PeriodicCheck) shouldRun() bool {
+	return atomic.LoadUint32(&pc.stopped) == 0
+}
+
+func (pc *PeriodicCheck) check() {
+	if pc.Condition() {
+		pc.conditionFulfilled()
+	} else {
+		pc.conditionNotFulfilled()
+	}
+
+	if !pc.shouldRun() {
+		return
+	}
+	time.AfterFunc(pc.CheckInterval, pc.check)
+}
+
+func (pc *PeriodicCheck) conditionNotFulfilled() {
+	pc.conditionHoldsSince = time.Time{}
+}
+
+func (pc *PeriodicCheck) conditionFulfilled() {
+	if pc.conditionHoldsSince.IsZero() {
+		pc.conditionHoldsSince = time.Now()
+	}
+
+	pc.Report(time.Since(pc.conditionHoldsSince))
+}
+
+// LedgerBlockPuller pulls blocks upon demand, or fetches them
+// from the ledger.
+type LedgerBlockPuller struct {
+	BlockPuller
+	BlockRetriever cluster.BlockRetriever
+	Height         func() uint64
+}
+
+func (ledgerPuller *LedgerBlockPuller) PullBlock(seq uint64) *common.Block {
+	lastSeq := ledgerPuller.Height() - 1
+	if lastSeq >= seq {
+		return ledgerPuller.BlockRetriever.Block(seq)
+	}
+	return ledgerPuller.BlockPuller.PullBlock(seq)
+}
+
+type evictionSuspector struct {
+	evictionSuspicionThreshold time.Duration
+	logger                     *flogging.FabricLogger
+	createPuller               CreateBlockPuller
+	height                     func() uint64
+	amIInChannel               cluster.SelfMembershipPredicate
+	halt                       func()
+	writeBlock                 func(block *common.Block) error
+	triggerCatchUp             func(sn *raftpb.Snapshot)
+	halted                     bool
+}
+
+func (es *evictionSuspector) confirmSuspicion(cumulativeSuspicion time.Duration) {
+	if es.evictionSuspicionThreshold > cumulativeSuspicion || es.halted {
+		return
+	}
+	es.logger.Infof("Suspecting our own eviction from the channel for %v", cumulativeSuspicion)
+	puller, err := es.createPuller()
+	if err != nil {
+		es.logger.Panicf("Failed creating a block puller")
+	}
+
+	lastConfigBlock, err := cluster.PullLastConfigBlock(puller)
+	if err != nil {
+		es.logger.Errorf("Failed pulling the last config block: %v", err)
+		return
+	}
+
+	es.logger.Infof("Last config block was found to be block %d", lastConfigBlock.Header.Number)
+
+	height := es.height()
+
+	if lastConfigBlock.Header.Number+1 <= height {
+		es.logger.Infof("Our height is higher or equal than the height of the orderer we pulled the last block from, aborting.")
+		return
+	}
+
+	err = es.amIInChannel(lastConfigBlock)
+	if err != cluster.ErrNotInChannel && err != cluster.ErrForbidden {
+		details := fmt.Sprintf(", our certificate was found in config block with sequence %d", lastConfigBlock.Header.Number)
+		if err != nil {
+			details = fmt.Sprintf(": %s", err.Error())
+		}
+		es.logger.Infof("Cannot confirm our own eviction from the channel%s", details)
+
+		es.triggerCatchUp(&raftpb.Snapshot{Data: utils.MarshalOrPanic(lastConfigBlock)})
+		return
+	}
+
+	es.logger.Warningf("Detected our own eviction from the chain in block %d", lastConfigBlock.Header.Number)
+
+	es.logger.Infof("Waiting for chain to halt")
+	es.halt()
+	es.halted = true
+	es.logger.Infof("Chain has been halted, pulling remaining blocks up to (and including) eviction block.")
+
+	nextBlock := height
+	es.logger.Infof("Will now pull blocks %d to %d", nextBlock, lastConfigBlock.Header.Number)
+	for seq := nextBlock; seq <= lastConfigBlock.Header.Number; seq++ {
+		es.logger.Infof("Pulling block %d", seq)
+		block := puller.PullBlock(seq)
+		err := es.writeBlock(block)
+		if err != nil {
+			es.logger.Panicf("Failed writing block %d to the ledger: %v", block.Header.Number, err)
+		}
+	}
+
+	es.logger.Infof("Pulled all blocks up to eviction block.")
 }

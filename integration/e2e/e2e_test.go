@@ -15,21 +15,19 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/fsouza/go-dockerclient"
+	docker "github.com/fsouza/go-dockerclient"
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric-lib-go/healthz"
 	"github.com/hyperledger/fabric/core/aclmgmt/resources"
 	"github.com/hyperledger/fabric/integration/nwo"
 	"github.com/hyperledger/fabric/integration/nwo/commands"
-	"github.com/hyperledger/fabric/protos/common"
-	protosorderer "github.com/hyperledger/fabric/protos/orderer"
 	"github.com/hyperledger/fabric/protos/orderer/etcdraft"
-	"github.com/hyperledger/fabric/protos/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
@@ -84,6 +82,17 @@ var _ = Describe("EndToEnd", func() {
 			network = nwo.New(nwo.BasicSolo(), testDir, client, BasePort(), components)
 			network.MetricsProvider = "statsd"
 			network.StatsdEndpoint = datagramReader.Address()
+			network.Profiles = append(network.Profiles, &nwo.Profile{
+				Name:          "TwoOrgsBaseProfileChannel",
+				Consortium:    "SampleConsortium",
+				Orderers:      []string{"orderer"},
+				Organizations: []string{"Org1", "Org2"},
+			})
+			network.Channels = append(network.Channels, &nwo.Channel{
+				Name:        "baseprofilechannel",
+				Profile:     "TwoOrgsBaseProfileChannel",
+				BaseProfile: "TwoOrgsOrdererGenesis",
+			})
 
 			network.GenerateConfigTree()
 			network.Bootstrap()
@@ -123,6 +132,10 @@ var _ = Describe("EndToEnd", func() {
 			CheckPeerStatsdMetrics(datagramReader.String(), "org1_peer0")
 			CheckPeerStatsdMetrics(datagramReader.String(), "org2_peer1")
 			CheckOrdererStatsdMetrics(datagramReader.String(), "ordererorg_orderer")
+
+			By("setting up a channel from a base profile")
+			additionalPeer := network.Peer("Org2", "peer1")
+			network.CreateChannel("baseprofilechannel", orderer, peer, additionalPeer)
 		})
 	})
 
@@ -151,7 +164,7 @@ var _ = Describe("EndToEnd", func() {
 		})
 	})
 
-	PDescribe("basic single node etcdraft network with 2 orgs", func() {
+	Describe("basic single node etcdraft network with 2 orgs", func() {
 		BeforeEach(func() {
 			network = nwo.New(nwo.BasicEtcdRaft(), testDir, client, BasePort(), components)
 			network.GenerateConfigTree()
@@ -172,7 +185,7 @@ var _ = Describe("EndToEnd", func() {
 		})
 	})
 
-	PDescribe("three node etcdraft network with 2 orgs", func() {
+	Describe("three node etcdraft network with 2 orgs", func() {
 		BeforeEach(func() {
 			network = nwo.New(nwo.MultiNodeEtcdRaft(), testDir, client, BasePort(), components)
 			network.GenerateConfigTree()
@@ -250,7 +263,7 @@ var _ = Describe("EndToEnd", func() {
 		})
 	})
 
-	PDescribe("etcd raft, checking valid configuration update of type B", func() {
+	Describe("etcd raft, checking valid configuration update of type B", func() {
 		BeforeEach(func() {
 			network = nwo.New(nwo.BasicEtcdRaft(), testDir, client, BasePort(), components)
 			network.GenerateConfigTree()
@@ -270,36 +283,35 @@ var _ = Describe("EndToEnd", func() {
 			nwo.DeployChaincode(network, "testchannel", orderer, chaincode)
 			RunQueryInvokeQuery(network, orderer, peer, "testchannel")
 
-			config := nwo.GetConfigBlock(network, peer, orderer, channel)
-			updatedConfig := proto.Clone(config).(*common.Config)
-
-			consensusTypeConfigValue := updatedConfig.ChannelGroup.Groups["Orderer"].Values["ConsensusType"]
-			consensusTypeValue := &protosorderer.ConsensusType{}
-			err := proto.Unmarshal(consensusTypeConfigValue.Value, consensusTypeValue)
+			snapDir := path.Join(network.RootDir, "orderers", orderer.ID(), "etcdraft", "snapshot", channel)
+			files, err := ioutil.ReadDir(snapDir)
 			Expect(err).NotTo(HaveOccurred())
+			numOfSnaps := len(files)
 
-			metadata := &etcdraft.Metadata{}
-			err = proto.Unmarshal(consensusTypeValue.Metadata, metadata)
+			nwo.UpdateConsensusMetadata(network, peer, orderer, channel, func(originalMetadata []byte) []byte {
+				metadata := &etcdraft.Metadata{}
+				err := proto.Unmarshal(originalMetadata, metadata)
+				Expect(err).NotTo(HaveOccurred())
+
+				// update max in flight messages
+				metadata.Options.MaxInflightMsgs = 1000
+				metadata.Options.MaxSizePerMsg = 512
+				metadata.Options.SnapshotInterval = 100 * 1024 * 1024 // 100 MB
+
+				// write metadata back
+				newMetadata, err := proto.Marshal(metadata)
+				Expect(err).NotTo(HaveOccurred())
+				return newMetadata
+			})
+
+			// assert that no new snapshot is taken because SnapshotInterval has just enlarged
+			files, err = ioutil.ReadDir(snapDir)
 			Expect(err).NotTo(HaveOccurred())
-
-			// update max in flight messages
-			metadata.Options.MaxInflightMsgs = 1000
-			metadata.Options.MaxSizePerMsg = 512
-
-			// write metadata back
-			consensusTypeValue.Metadata, err = proto.Marshal(metadata)
-			Expect(err).NotTo(HaveOccurred())
-
-			updatedConfig.ChannelGroup.Groups["Orderer"].Values["ConsensusType"] = &common.ConfigValue{
-				ModPolicy: "Admins",
-				Value:     utils.MarshalOrPanic(consensusTypeValue),
-			}
-
-			nwo.UpdateOrdererConfig(network, orderer, channel, config, updatedConfig, peer, orderer)
+			Expect(len(files)).To(Equal(numOfSnaps))
 		})
 	})
 
-	PDescribe("basic single node etcdraft network with 2 orgs and 2 channels", func() {
+	Describe("basic single node etcdraft network with 2 orgs and 2 channels", func() {
 		BeforeEach(func() {
 			network = nwo.New(nwo.MultiChannelEtcdRaft(), testDir, client, BasePort(), components)
 			network.GenerateConfigTree()
@@ -318,10 +330,10 @@ var _ = Describe("EndToEnd", func() {
 			nwo.DeployChaincode(network, "testchannel1", orderer, chaincode)
 
 			network.CreateAndJoinChannel(orderer, "testchannel2")
-			nwo.InstantiateChaincode(network, "testchannel2", orderer, chaincode, peer)
+			nwo.InstantiateChaincode(network, "testchannel2", orderer, chaincode, peer, network.PeersWithChannel("testchannel2")...)
 
-			RunQueryInvokeQuery(network, orderer, peer, "testchannel1")
 			RunQueryInvokeQuery(network, orderer, peer, "testchannel2")
+			RunQueryInvokeQuery(network, orderer, peer, "testchannel1")
 		})
 	})
 })

@@ -48,6 +48,50 @@ The following metrics are currently exported for consumption by Prometheus.
 |                                                     |           |                                                            | channel            |
 |                                                     |           |                                                            | chaincode          |
 +-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| cluster_comm_egress_queue_capacity                  | gauge     | Capacity of the egress queue                               | host               |
+|                                                     |           |                                                            | msg_type           |
+|                                                     |           |                                                            | channel            |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| cluster_comm_egress_queue_length                    | gauge     | Length of the egress queue                                 | host               |
+|                                                     |           |                                                            | msg_type           |
+|                                                     |           |                                                            | channel            |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| cluster_comm_egress_queue_workers                   | gauge     | Count of egress queue workers                              | channel            |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| cluster_comm_egress_stream_count                    | gauge     | Count of streams to other nodes                            | channel            |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| cluster_comm_egress_tls_connection_count            | gauge     | Count of TLS connections to other nodes                    |                    |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| cluster_comm_ingress_stream_count                   | gauge     | Count of streams from other nodes                          |                    |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| cluster_comm_msg_dropped_count                      | counter   | Count of messages dropped                                  | host               |
+|                                                     |           |                                                            | channel            |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| cluster_comm_msg_send_time                          | histogram | Time it takes to send a message down the stream            | host               |
+|                                                     |           |                                                            | channel            |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| consensus_etcdraft_cluster_size                     | gauge     | Number of nodes in this channel.                           | channel            |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| consensus_etcdraft_committed_block_number           | gauge     | The block number of the latest block committed.            | channel            |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| consensus_etcdraft_config_proposals_received        | counter   | The total number of proposals received for config type     | channel            |
+|                                                     |           | transactions.                                              |                    |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| consensus_etcdraft_data_persist_duration            | histogram | The time taken for etcd/raft data to be persisted in       | channel            |
+|                                                     |           | storage (in seconds).                                      |                    |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| consensus_etcdraft_is_leader                        | gauge     | The leadership status of the current node: 1 if it is the  | channel            |
+|                                                     |           | leader else 0.                                             |                    |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| consensus_etcdraft_leader_changes                   | counter   | The number of leader changes.                              | channel            |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| consensus_etcdraft_normal_proposals_received        | counter   | The total number of proposals received for normal type     | channel            |
+|                                                     |           | transactions.                                              |                    |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| consensus_etcdraft_proposal_failures                | counter   | The number of proposal failures.                           | channel            |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
+| consensus_etcdraft_snapshot_block_number            | gauge     | The block number of the latest snapshot.                   | channel            |
++-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
 | consensus_kafka_batch_size                          | gauge     | The mean batch size in bytes sent to topics.               | topic              |
 +-----------------------------------------------------+-----------+------------------------------------------------------------+--------------------+
 | consensus_kafka_compression_ratio                   | gauge     | The mean compression ratio (as percentage) for topics.     | topic              |
@@ -211,6 +255,44 @@ associated with the metric.
 | chaincode.shim_requests_completed.%{type}.%{channel}.%{chaincode}.%{success}            | counter   | The number of chaincode shim requests completed.           |
 +-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
 | chaincode.shim_requests_received.%{type}.%{channel}.%{chaincode}                        | counter   | The number of chaincode shim requests received.            |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| cluster.comm.egress_queue_capacity.%{host}.%{msg_type}.%{channel}                       | gauge     | Capacity of the egress queue                               |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| cluster.comm.egress_queue_length.%{host}.%{msg_type}.%{channel}                         | gauge     | Length of the egress queue                                 |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| cluster.comm.egress_queue_workers.%{channel}                                            | gauge     | Count of egress queue workers                              |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| cluster.comm.egress_stream_count.%{channel}                                             | gauge     | Count of streams to other nodes                            |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| cluster.comm.egress_tls_connection_count                                                | gauge     | Count of TLS connections to other nodes                    |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| cluster.comm.ingress_stream_count                                                       | gauge     | Count of streams from other nodes                          |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| cluster.comm.msg_dropped_count.%{host}.%{channel}                                       | counter   | Count of messages dropped                                  |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| cluster.comm.msg_send_time.%{host}.%{channel}                                           | histogram | Time it takes to send a message down the stream            |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| consensus.etcdraft.cluster_size.%{channel}                                              | gauge     | Number of nodes in this channel.                           |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| consensus.etcdraft.committed_block_number.%{channel}                                    | gauge     | The block number of the latest block committed.            |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| consensus.etcdraft.config_proposals_received.%{channel}                                 | counter   | The total number of proposals received for config type     |
+|                                                                                         |           | transactions.                                              |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| consensus.etcdraft.data_persist_duration.%{channel}                                     | histogram | The time taken for etcd/raft data to be persisted in       |
+|                                                                                         |           | storage (in seconds).                                      |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| consensus.etcdraft.is_leader.%{channel}                                                 | gauge     | The leadership status of the current node: 1 if it is the  |
+|                                                                                         |           | leader else 0.                                             |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| consensus.etcdraft.leader_changes.%{channel}                                            | counter   | The number of leader changes.                              |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| consensus.etcdraft.normal_proposals_received.%{channel}                                 | counter   | The total number of proposals received for normal type     |
+|                                                                                         |           | transactions.                                              |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| consensus.etcdraft.proposal_failures.%{channel}                                         | counter   | The number of proposal failures.                           |
++-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
+| consensus.etcdraft.snapshot_block_number.%{channel}                                     | gauge     | The block number of the latest snapshot.                   |
 +-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
 | consensus.kafka.batch_size.%{topic}                                                     | gauge     | The mean batch size in bytes sent to topics.               |
 +-----------------------------------------------------------------------------------------+-----------+------------------------------------------------------------+
