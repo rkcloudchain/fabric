@@ -129,7 +129,7 @@ var _ bool = Describe("Kafka2RaftMigration", func() {
 
 			By("Step 1, Verify: new channels cannot be created")
 			channel := "testchannel"
-			network.CreateChannelFail(orderer, channel)
+			network.CreateChannelFail(channel, orderer, peer)
 
 			//=== Step 2: Config update on system channel, MigrationState=COMMIT, type=etcdraft ===
 			By("Step 2: Config update on system channel, MigrationState=COMMIT, type=etcdraft")
@@ -155,7 +155,7 @@ var _ bool = Describe("Kafka2RaftMigration", func() {
 			validateConsensusTypeValue(consensusTypeValue, "etcdraft", protosorderer.ConsensusType_MIG_STATE_COMMIT, migrationContext)
 
 			By("Step 2, Verify: new channels cannot be created")
-			network.CreateChannelFail(orderer, channel)
+			network.CreateChannelFail(channel, orderer, peer, peer)
 
 			By("Step 2, Verify: new config updates are not accepted")
 			updateConfigWithConsensusType("kafka", []byte{}, protosorderer.ConsensusType_MIG_STATE_START, 0,
@@ -258,7 +258,7 @@ var _ bool = Describe("Kafka2RaftMigration", func() {
 			Expect(filepath.Join(network.RootDir, tlsPath)).To(Equal(network.OrdererLocalTLSDir(orderer)))
 			certBytes, err := ioutil.ReadFile(filepath.Join(network.RootDir, tlsPath, "server.crt"))
 			Expect(err).NotTo(HaveOccurred())
-			raft_metadata := &protosraft.Metadata{
+			raft_metadata := &protosraft.ConfigMetadata{
 				Consenters: []*protosraft.Consenter{
 					{
 						ClientTlsCert: certBytes,
@@ -268,16 +268,15 @@ var _ bool = Describe("Kafka2RaftMigration", func() {
 					},
 				},
 				Options: &protosraft.Options{
-					TickInterval:     "500ms",
-					ElectionTick:     10,
-					HeartbeatTick:    1,
-					MaxInflightMsgs:  256,
-					MaxSizePerMsg:    1048576,
-					SnapshotInterval: 8388608,
+					TickInterval:         "500ms",
+					ElectionTick:         10,
+					HeartbeatTick:        1,
+					MaxInflightBlocks:    5,
+					SnapshotIntervalSize: 20 * 1024 * 1024,
 				}}
 
 			raft_metadata_bytes := utils.MarshalOrPanic(raft_metadata)
-			raft_metadata2 := &protosraft.Metadata{}
+			raft_metadata2 := &protosraft.ConfigMetadata{}
 			errUnma := proto.Unmarshal(raft_metadata_bytes, raft_metadata2)
 			Expect(errUnma).NotTo(HaveOccurred())
 
