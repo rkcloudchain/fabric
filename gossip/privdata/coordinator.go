@@ -21,6 +21,7 @@ import (
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/transientstore"
+	"github.com/hyperledger/fabric/gossip/metrics"
 	privdatacommon "github.com/hyperledger/fabric/gossip/privdata/common"
 	"github.com/hyperledger/fabric/gossip/util"
 	"github.com/hyperledger/fabric/protos/common"
@@ -30,14 +31,9 @@ import (
 	transientstore2 "github.com/hyperledger/fabric/protos/transientstore"
 	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 )
 
-const (
-	pullRetrySleepInterval           = time.Second
-	transientBlockRetentionConfigKey = "peer.gossip.pvtData.transientstoreMaxBlockRetention"
-	transientBlockRetentionDefault   = 1000
-)
+const pullRetrySleepInterval = time.Second
 
 var logger = util.GetLogger(util.PrivateDataLogger, "")
 
@@ -124,16 +120,21 @@ type coordinator struct {
 	selfSignedData common.SignedData
 	Support
 	transientBlockRetention uint64
+	metrics                 *metrics.PrivdataMetrics
+	pullRetryThreshold      time.Duration
+}
+
+type CoordinatorConfig struct {
+	TransientBlockRetention uint64
+	PullRetryThreshold      time.Duration
 }
 
 // NewCoordinator creates a new instance of coordinator
-func NewCoordinator(support Support, selfSignedData common.SignedData) Coordinator {
-	transientBlockRetention := uint64(viper.GetInt(transientBlockRetentionConfigKey))
-	if transientBlockRetention == 0 {
-		logger.Warning("Configuration key", transientBlockRetentionConfigKey, "isn't set, defaulting to", transientBlockRetentionDefault)
-		transientBlockRetention = transientBlockRetentionDefault
-	}
-	return &coordinator{Support: support, selfSignedData: selfSignedData, transientBlockRetention: transientBlockRetention}
+func NewCoordinator(support Support, selfSignedData common.SignedData, metrics *metrics.PrivdataMetrics,
+	config CoordinatorConfig) Coordinator {
+	return &coordinator{Support: support, selfSignedData: selfSignedData,
+		transientBlockRetention: config.TransientBlockRetention, metrics: metrics,
+		pullRetryThreshold: config.PullRetryThreshold}
 }
 
 // StorePvtData used to persist private date into transient store
@@ -153,7 +154,10 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 	logger.Infof("[%s] Received block [%d] from buffer", c.ChainID, block.Header.Number)
 
 	logger.Debugf("[%s] Validating block [%d]", c.ChainID, block.Header.Number)
+
+	validationStart := time.Now()
 	err := c.Validator.Validate(block)
+	c.reportValidationDuration(time.Since(validationStart))
 	if err != nil {
 		logger.Errorf("Validation failed: %+v", err)
 		return err
@@ -165,6 +169,7 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 		MissingPvtData: make(ledger.TxMissingPvtDataMap),
 	}
 
+	listMissingStart := time.Now()
 	ownedRWsets, err := computeOwnedRWsets(block, privateDataSets)
 	if err != nil {
 		logger.Warning("Failed computing owned RWSets", err)
@@ -177,7 +182,9 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 		return err
 	}
 
-	retryThresh := viper.GetDuration("peer.gossip.pvtData.pullRetryThreshold")
+	c.reportListMissingPrivateDataDuration(time.Since(listMissingStart))
+
+	retryThresh := c.pullRetryThreshold
 	var bFetchFromPeers bool // defaults to false
 	if len(privateInfo.missingKeys) == 0 {
 		logger.Debugf("[%s] No missing collection private write sets to fetch from remote peers", c.ChainID)
@@ -198,6 +205,8 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 		time.Sleep(pullRetrySleepInterval)
 	}
 	elapsedPull := int64(time.Since(startPull) / time.Millisecond) // duration in ms
+
+	c.reportFetchDuration(time.Since(startPull))
 
 	// Only log results if we actually attempted to fetch
 	if bFetchFromPeers {
@@ -230,10 +239,14 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 	}
 
 	// commit block and private data
+	commitStart := time.Now()
 	err = c.CommitWithPvtData(blockAndPvtData)
+	c.reportCommitDuration(time.Since(commitStart))
 	if err != nil {
 		return errors.Wrap(err, "commit failed")
 	}
+
+	purgeStart := time.Now()
 
 	if len(blockAndPvtData.PvtData) > 0 {
 		// Finally, purge all transactions in block - valid or not valid.
@@ -249,6 +262,8 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 			logger.Error("Failed purging data from transient store at block", seq, ":", err)
 		}
 	}
+
+	c.reportPurgeDuration(time.Since(purgeStart))
 
 	return nil
 }
@@ -864,6 +879,26 @@ func (c *coordinator) GetPvtDataAndBlockByNum(seqNum uint64, peerAuthInfo common
 	})
 
 	return blockAndPvtData.Block, seqs2Namespaces.asPrivateData(), nil
+}
+
+func (c *coordinator) reportValidationDuration(time time.Duration) {
+	c.metrics.ValidationDuration.With("channel", c.ChainID).Observe(time.Seconds())
+}
+
+func (c *coordinator) reportListMissingPrivateDataDuration(time time.Duration) {
+	c.metrics.ListMissingPrivateDataDuration.With("channel", c.ChainID).Observe(time.Seconds())
+}
+
+func (c *coordinator) reportFetchDuration(time time.Duration) {
+	c.metrics.FetchDuration.With("channel", c.ChainID).Observe(time.Seconds())
+}
+
+func (c *coordinator) reportCommitDuration(time time.Duration) {
+	c.metrics.CommitPrivateDataDuration.With("channel", c.ChainID).Observe(time.Seconds())
+}
+
+func (c *coordinator) reportPurgeDuration(time time.Duration) {
+	c.metrics.PurgeDuration.With("channel", c.ChainID).Observe(time.Seconds())
 }
 
 // containsWrites checks whether the given CollHashedRwSet contains writes

@@ -18,13 +18,13 @@ import (
 	"github.com/hyperledger/fabric/gossip/comm"
 	common2 "github.com/hyperledger/fabric/gossip/common"
 	"github.com/hyperledger/fabric/gossip/discovery"
+	"github.com/hyperledger/fabric/gossip/metrics"
 	"github.com/hyperledger/fabric/gossip/util"
 	"github.com/hyperledger/fabric/protos/common"
 	proto "github.com/hyperledger/fabric/protos/gossip"
 	"github.com/hyperledger/fabric/protos/ledger/rwset"
 	"github.com/hyperledger/fabric/protos/transientstore"
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 )
 
 // GossipStateProvider is the interface to acquire sequences of the ledger blocks
@@ -38,17 +38,17 @@ type GossipStateProvider interface {
 }
 
 const (
-	defAntiEntropyInterval             = 10 * time.Second
-	defAntiEntropyStateResponseTimeout = 3 * time.Second
-	defAntiEntropyBatchSize            = 10
+	DefAntiEntropyInterval             = 10 * time.Second
+	DefAntiEntropyStateResponseTimeout = 3 * time.Second
+	DefAntiEntropyBatchSize            = 10
 
-	defChannelBufferSize     = 100
-	defAntiEntropyMaxRetries = 3
+	DefChannelBufferSize     = 100
+	DefAntiEntropyMaxRetries = 3
 
-	defMaxBlockDistance = 100
+	DefMaxBlockDistance = 100
 
-	blocking    = true
-	nonBlocking = false
+	Blocking    = true
+	NonBlocking = false
 
 	enqueueRetryInterval = time.Millisecond * 100
 )
@@ -62,6 +62,7 @@ type Configuration struct {
 	AntiEntropyMaxRetries           int
 	ChannelBufferSize               int
 	EnableStateTransfer             bool
+	BlockingMode                    bool
 }
 
 // GossipAdapter defines gossip/communication required interface for state provider
@@ -161,9 +162,9 @@ type GossipStateProviderImpl struct {
 
 	requestValidator *stateRequestValidator
 
-	blockingMode bool
-
 	config *Configuration
+
+	stateMetrics *metrics.StateMetrics
 }
 
 var logger = util.GetLogger(util.StateLogger, "")
@@ -185,52 +186,9 @@ func (v *stateRequestValidator) validate(request *proto.RemoteStateRequest, batc
 	return nil
 }
 
-// readConfiguration reading state configuration
-func readConfiguration() *Configuration {
-	config := &Configuration{
-		AntiEntropyInterval:             defAntiEntropyInterval,
-		AntiEntropyStateResponseTimeout: defAntiEntropyStateResponseTimeout,
-		AntiEntropyBatchSize:            defAntiEntropyBatchSize,
-		MaxBlockDistance:                defMaxBlockDistance,
-		AntiEntropyMaxRetries:           defAntiEntropyMaxRetries,
-		ChannelBufferSize:               defChannelBufferSize,
-		EnableStateTransfer:             true,
-	}
-
-	if viper.IsSet("peer.gossip.state.checkInterval") {
-		config.AntiEntropyInterval = viper.GetDuration("peer.gossip.state.checkInterval")
-	}
-
-	if viper.IsSet("peer.gossip.state.responseTimeout") {
-		config.AntiEntropyStateResponseTimeout = viper.GetDuration("peer.gossip.state.responseTimeout")
-	}
-
-	if viper.IsSet("peer.gossip.state.batchSize") {
-		config.AntiEntropyBatchSize = uint64(viper.GetInt("peer.gossip.state.batchSize"))
-	}
-
-	if viper.IsSet("peer.gossip.state.blockBufferSize") {
-		config.MaxBlockDistance = viper.GetInt("peer.gossip.state.blockBufferSize")
-	}
-
-	if viper.IsSet("peer.gossip.state.maxRetries") {
-		config.AntiEntropyMaxRetries = viper.GetInt("peer.gossip.state.maxRetries")
-	}
-
-	if viper.IsSet("peer.gossip.state.channelSize") {
-		config.ChannelBufferSize = viper.GetInt("peer.gossip.state.channelSize")
-	}
-
-	if viper.IsSet("peer.gossip.state.enabled") {
-		config.EnableStateTransfer = viper.GetBool("peer.gossip.state.enabled")
-	}
-
-	return config
-}
-
 // NewGossipStateProvider creates state provider with coordinator instance
 // to orchestrate arrival of private rwsets and blocks before committing them into the ledger.
-func NewGossipStateProvider(chainID string, services *ServicesMediator, ledger ledgerResources) GossipStateProvider {
+func NewGossipStateProvider(chainID string, services *ServicesMediator, ledger ledgerResources, stateMetrics *metrics.StateMetrics, config *Configuration) GossipStateProvider {
 
 	gossipChan, _ := services.Accept(func(message interface{}) bool {
 		// Get only data messages
@@ -274,9 +232,6 @@ func NewGossipStateProvider(chainID string, services *ServicesMediator, ledger l
 		return nil
 	}
 
-	// Reading state configuration
-	config := readConfiguration()
-
 	s := &GossipStateProviderImpl{
 		// MessageCryptoService
 		mediator: services,
@@ -290,8 +245,12 @@ func NewGossipStateProvider(chainID string, services *ServicesMediator, ledger l
 		// Channel to read direct messages from other peers
 		commChan: commChan,
 
-		// Create a queue for payload received
-		payloads: NewPayloadsBuffer(height),
+		// Create a queue for payloads, wrapped in a metrics buffer
+		payloads: &metricsBuffer{
+			PayloadsBuffer: NewPayloadsBuffer(height),
+			sizeMetrics:    stateMetrics.PayloadBufferSize,
+			chainID:        chainID,
+		},
 
 		ledger: ledger,
 
@@ -308,6 +267,8 @@ func NewGossipStateProvider(chainID string, services *ServicesMediator, ledger l
 		requestValidator: &stateRequestValidator{},
 
 		config: config,
+
+		stateMetrics: stateMetrics,
 	}
 
 	logger.Infof("Updating metadata information, "+
@@ -559,7 +520,7 @@ func (s *GossipStateProviderImpl) handleStateResponse(msg proto.ReceivedMessage)
 			max = payload.SeqNum
 		}
 
-		err := s.addPayload(payload, blocking)
+		err := s.addPayload(payload, Blocking)
 		if err != nil {
 			logger.Warningf("Block [%d] received from block transfer wasn't added to payload buffer: %v", payload.SeqNum, err)
 		}
@@ -593,7 +554,7 @@ func (s *GossipStateProviderImpl) queueNewMessage(msg *proto.GossipMessage) {
 
 	dataMsg := msg.GetDataMsg()
 	if dataMsg != nil {
-		if err := s.addPayload(dataMsg.GetPayload(), nonBlocking); err != nil {
+		if err := s.addPayload(dataMsg.GetPayload(), NonBlocking); err != nil {
 			logger.Warningf("Block [%d] received from gossip wasn't added to payload buffer: %v", dataMsg.Payload.SeqNum, err)
 			return
 		}
@@ -811,11 +772,7 @@ func (s *GossipStateProviderImpl) hasRequiredHeight(height uint64) func(peer dis
 
 // AddPayload adds new payload into state.
 func (s *GossipStateProviderImpl) AddPayload(payload *proto.Payload) error {
-	blockingMode := blocking
-	if viper.GetBool("peer.gossip.nonBlockingCommitMode") {
-		blockingMode = false
-	}
-	return s.addPayload(payload, blockingMode)
+	return s.addPayload(payload, s.config.BlockingMode)
 }
 
 // addPayload adds new payload into state. It may (or may not) block according to the
@@ -847,16 +804,23 @@ func (s *GossipStateProviderImpl) addPayload(payload *proto.Payload, blockingMod
 
 func (s *GossipStateProviderImpl) commitBlock(block *common.Block, pvtData util.PvtDataCollections) error {
 
+	t1 := time.Now()
+
 	// Commit block with available private transactions
 	if err := s.ledger.StoreBlock(block, pvtData); err != nil {
 		logger.Errorf("Got error while committing(%+v)", errors.WithStack(err))
 		return err
 	}
 
+	sinceT1 := time.Since(t1)
+	s.stateMetrics.CommitDuration.With("channel", s.chainID).Observe(sinceT1.Seconds())
+
 	// Update ledger height
 	s.mediator.UpdateLedgerHeight(block.Header.Number+1, common2.ChainID(s.chainID))
 	logger.Debugf("[%s] Committed block [%d] with %d transaction(s)",
 		s.chainID, block.Header.Number, len(block.Data.Data))
+
+	s.stateMetrics.Height.With("channel", s.chainID).Set(float64(block.Header.Number + 1))
 
 	return nil
 }
