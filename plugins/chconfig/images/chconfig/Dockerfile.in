@@ -1,0 +1,10 @@
+# Copyright Greg Haskins All Rights Reserved
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+FROM ubuntu:_BASE_TAG_
+RUN mkdir -p /tmp/scripts
+COPY payload/chconfig /usr/local/bin
+ADD payload/scripts.tar.bz2 /tmp/scripts
+RUN /tmp/scripts/init.sh && /tmp/scripts/cleanup.sh && rm -rf /tmp/scripts
+CMD ["chconfig","start"]

@@ -36,6 +36,7 @@ CGO_FLAGS = CGO_CFLAGS=" "
 
 pkgmap.peer           := $(PKGNAME)/peer
 pkgmap.gscc.so        := $(PKGNAME)/plugins/gscc
+pkgmap.chconfig       := $(PKGNAME)/plugins/chconfig
 
 # No sense rebuilding when non production code is changed
 PROJECT_FILES = $(shell git ls-files  | grep -v ^test | grep -v ^unit-test | \
@@ -44,20 +45,32 @@ PROJECT_FILES = $(shell git ls-files  | grep -v ^test | grep -v ^unit-test | \
 
 peer-docker: $(BUILD_DIR)/image/peer
 
+chconfig-docker: $(BUILD_DIR)/image/chconfig
+
 $(BUILD_DIR)/docker/bin/peer: $(PROJECT_FILES)
 	@echo "Building $@"
 	@mkdir -p $(BUILD_DIR)/docker/bin
 	$(CGO_FLAGS) GOBIN=$(abspath $(@D)) go install -tags "$(GO_TAGS)" -ldflags "$(GO_LDFLAGS)" $(pkgmap.$(@F))
 	@touch $@
 
+$(BUILD_DIR)/docker/bin/chconfig: $(PROJECT_FILES)
+	@echo "Building $@"
+	@mkdir -p $(BUILD_DIR)/docker/bin
+	GOBIN=$(abspath $(@D)) go install $(pkgmap.$(@F))
+	@touch $@
+
 $(BUILD_DIR)/docker/lib/gscc.so: $(PROJECT_FILES)
 	@echo "Building $@"
 	@mkdir -p $(BUILD_DIR)/docker/lib
 	go build -buildmode=plugin -o $(abspath $(@D))/gscc.so $(pkgmap.$(@F))
+	@touch $@
 
 $(BUILD_DIR)/image/peer/payload:       $(BUILD_DIR)/docker/bin/peer \
 				$(BUILD_DIR)/docker/lib/gscc.so \
 				$(BUILD_DIR)/sampleconfig.tar.bz2 \
+				$(BUILD_DIR)/scripts.tar.bz2
+
+$(BUILD_DIR)/image/chconfig/payload:   $(BUILD_DIR)/docker/bin/chconfig \
 				$(BUILD_DIR)/scripts.tar.bz2
 
 $(BUILD_DIR)/image/%/payload:
@@ -70,6 +83,12 @@ $(BUILD_DIR)/image/peer/Dockerfile: plugins/gscc/images/peer/Dockerfile.in
 		| sed -e 's|_BASE_TAG_|$(BASE_DOCKER_TAG)|g' \
 		> $@
 
+$(BUILD_DIR)/image/chconfig/Dockerfile: plugins/chconfig/images/chconfig/Dockerfile.in
+	mkdir -p $(@D)
+	@cat $< \
+		| sed -e 's|_BASE_TAG_|$(BASE_DOCKER_TAG)|g' \
+		> $@
+
 $(BUILD_DIR)/image/peer: cloudchain.mk $(BUILD_DIR)/image/peer/payload $(BUILD_DIR)/image/peer/Dockerfile
 	@echo "Building docker peer-image"
 	docker build -t $(DOCKER_NS)/fabric-peer $@
@@ -77,8 +96,16 @@ $(BUILD_DIR)/image/peer: cloudchain.mk $(BUILD_DIR)/image/peer/payload $(BUILD_D
 	docker tag $(DOCKER_NS)/fabric-peer $(DOCKER_NS)/fabric-peer:$(ARCH)-latest
 	@touch $@
 
+$(BUILD_DIR)/image/chconfig: cloudchain.mk $(BUILD_DIR)/image/chconfig/payload $(BUILD_DIR)/image/chconfig/Dockerfile
+	@echo "Building docker chconfig-image"
+	docker build -t $(DOCKER_NS)/fabric-chconfig $@
+	docker tag $(DOCKER_NS)/fabric-chconfig $(DOCKER_NS)/fabric-chconfig:$(DOCKER_TAG)
+	docker tag $(DOCKER_NS)/fabric-chconfig $(DOCKER_NS)/fabric-chconfig:$(ARCH)-latest
+	@touch $@
+
+
 $(BUILD_DIR)/sampleconfig.tar.bz2: $(shell find plugins/gscc/sampleconfig -type f)
 	(cd plugins/gscc/sampleconfig && tar -jc *) > $@
 
-$(BUILD_DIR)/scripts.tar.bz2: $(shell find plugins/gscc/scripts -type f)
-	(cd plugins/gscc/scripts && tar -jc *) > $@
+$(BUILD_DIR)/scripts.tar.bz2: $(shell find plugins/scripts -type f)
+	(cd plugins/scripts && tar -jc *) > $@
