@@ -34,7 +34,7 @@ var startCmd = &cobra.Command{
 		return common.InitCrypto(viper.Get("msp.path").(string), viper.Get("msp.id").(string), "bccsp")
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return startServer(fmt.Sprintf("%s:%d", viper.Get("listen.address"), viper.Get("listen.port")))
+		return startServer(fmt.Sprintf("%s:%d", viper.GetString("listen.address"), viper.GetInt("listen.port")))
 	},
 }
 
@@ -101,9 +101,9 @@ func startServer(address string) error {
 	}
 	logger.Infof("Serving HTTP requests on %s", listener.Addr())
 
-	tlsEnabled := viper.Get("server.tls.enabled").(bool)
+	tlsEnabled := viper.GetBool("server.tls.enabled")
 	if tlsEnabled {
-		cert, err := tls.LoadX509KeyPair(viper.Get("server.tls.certfile").(string), viper.Get("server.tls.keyfile").(string))
+		cert, err := tls.LoadX509KeyPair(viper.GetString("server.tls.certfile"), viper.GetString("server.tls.keyfile"))
 		if err != nil {
 			return err
 		}

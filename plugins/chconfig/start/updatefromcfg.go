@@ -8,6 +8,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/plugins/chconfig/common"
+	cb "github.com/hyperledger/fabric/protos/common"
 )
 
 // UpdateFromConfigsRequest ...
@@ -68,7 +69,43 @@ func computeUpdateFromConfigs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cheader := &cb.ChannelHeader{ChannelId: req.Channel, Type: int32(cb.HeaderType_CONFIG_UPDATE)}
+	cheaderBytes, err := proto.Marshal(cheader)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, "Error with marshal channel header: %s\n", err)
+		return
+	}
+
+	cfgEnvp := &cb.ConfigUpdateEnvelope{ConfigUpdate: encoded}
+	data, err := proto.Marshal(cfgEnvp)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, "Error marshaling ConfigUpdateEnvelope: %s\n", err)
+		return
+	}
+
+	payload := &cb.Payload{
+		Header: &cb.Header{ChannelHeader: cheaderBytes},
+		Data:   data,
+	}
+
+	data, err = proto.Marshal(payload)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, "Error marshaling Payload: %s\n", err)
+		return
+	}
+
+	envp := &cb.Envelope{Payload: data}
+	data, err = proto.Marshal(envp)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, "Error marshaling Envelope: %s\n", err)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Write(encoded)
+	w.Write(data)
 }
