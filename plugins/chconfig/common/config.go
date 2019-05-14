@@ -78,13 +78,33 @@ func EncodeOrdererOrgGroup(data []byte) (*cb.ConfigGroup, error) {
 	return group.ConfigGroup, nil
 }
 
-// ComputeUpdateFromConfigs compute updated config
-func ComputeUpdateFromConfigs(originalConfig *cb.Config, updatedConfig *cb.ConfigGroup, chainID, mspID string) (*cb.ConfigUpdate, error) {
+// ComputeAddedUpdateFromConfigs compute updated config
+func ComputeAddedUpdateFromConfigs(originalConfig *cb.Config, updatedConfig *cb.ConfigGroup, chainID, mspID string) (*cb.ConfigUpdate, error) {
 	updated := proto.Clone(originalConfig).(*cb.Config)
 	groups := updated.ChannelGroup.Groups
 	applicaton := groups["Application"]
 	applicaton.Groups[mspID] = updatedConfig
 
+	configUpdate, err := update.Compute(originalConfig, updated)
+	if err != nil {
+		return nil, err
+	}
+
+	configUpdate.ChannelId = chainID
+	return configUpdate, nil
+}
+
+// ComputeRemovedUpdateFromConfigs compute updated config
+func ComputeRemovedUpdateFromConfigs(originalConfig *cb.Config, chainID, mspID string) (*cb.ConfigUpdate, error) {
+	updated := proto.Clone(originalConfig).(*cb.Config)
+	groups := updated.ChannelGroup.Groups
+	application := groups["Application"]
+
+	if _, ok := application.Groups[mspID]; !ok {
+		return nil, errors.Errorf("Could't find any msp id with %s", mspID)
+	}
+
+	delete(application.Groups, mspID)
 	configUpdate, err := update.Compute(originalConfig, updated)
 	if err != nil {
 		return nil, err

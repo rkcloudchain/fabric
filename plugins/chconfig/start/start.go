@@ -134,7 +134,8 @@ func startServer(address string) error {
 
 func router() *mux.Router {
 	r := mux.NewRouter().StrictSlash(true)
-	r.HandleFunc("/chconfig/update-from-configs", computeUpdateFromConfigs).Methods(http.MethodPost)
+	r.HandleFunc("/chconfig/add-from-configs", computeAddedUpdateFromConfigs).Methods(http.MethodPost)
+	r.HandleFunc("/chconfig/remove-from-configs", computeRemovedUpdateFromConfigs).Methods(http.MethodPost)
 	r.HandleFunc("/chconfig/sign-config-tx", signConfigTx).Methods(http.MethodPost)
 	r.HandleFunc("/chconfig/update", update).Methods(http.MethodPost)
 
