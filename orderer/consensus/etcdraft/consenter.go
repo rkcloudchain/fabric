@@ -8,7 +8,6 @@ package etcdraft
 
 import (
 	"bytes"
-	"encoding/hex"
 	"path"
 	"reflect"
 	"time"
@@ -120,29 +119,18 @@ func (c *Consenter) detectSelfID(consenters map[uint64]*etcdraft.Consenter) (uin
 
 // HandleChain returns a new Chain instance or an error upon failure
 func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *common.Metadata) (consensus.Chain, error) {
-
-	if support.SharedConfig().Capabilities().Kafka2RaftMigration() {
-		c.Logger.Debugf("SharedConfig.ConsensusType fields: Type=%s, ConsensusMigrationState=%s, ConsensusMigrationContext=%d, ConsensusMetadata length=%d",
-			support.SharedConfig().ConsensusType(), support.SharedConfig().ConsensusMigrationState(),
-			support.SharedConfig().ConsensusMigrationContext(), len(support.SharedConfig().ConsensusMetadata()))
-		if support.SharedConfig().ConsensusMigrationState() != orderer.ConsensusType_MIG_STATE_NONE {
-			c.Logger.Debugf("SharedConfig.ConsensusType: ConsensusMetadata dump:\n%s", hex.Dump(support.SharedConfig().ConsensusMetadata()))
-		}
-	}
-
 	m := &etcdraft.ConfigMetadata{}
 	if err := proto.Unmarshal(support.SharedConfig().ConsensusMetadata(), m); err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal consensus metadata")
 	}
 
-	if support.SharedConfig().Capabilities().Kafka2RaftMigration() &&
-		support.SharedConfig().ConsensusMigrationState() != orderer.ConsensusType_MIG_STATE_NONE {
-		c.Logger.Debugf("SharedConfig().ConsensusMetadata(): %s", m.String())
-		c.Logger.Debugf("block metadata.Value dump: \n%s", hex.Dump(metadata.Value))
-	}
-
 	if m.Options == nil {
 		return nil, errors.New("etcdraft options have not been provided")
+	}
+
+	isMigration := (metadata == nil || len(metadata.Value) == 0) && (support.Height() > 1)
+	if isMigration {
+		c.Logger.Debugf("Block metadata is nil at block height=%d, it is consensus-type migration", support.Height())
 	}
 
 	// determine raft replica set mapping for each node to its id
@@ -200,6 +188,8 @@ func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *co
 
 		BlockMetadata: blockMetadata,
 		Consenters:    consenters,
+
+		MigrationInit: isMigration,
 
 		WALDir:            path.Join(c.EtcdRaftConfig.WALDir, support.ChainID()),
 		SnapDir:           path.Join(c.EtcdRaftConfig.SnapDir, support.ChainID()),
