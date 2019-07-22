@@ -35,12 +35,12 @@ func Rollback(blockStorageDir, ledgerID string, targetBlockNum uint64, indexConf
 		return err
 	}
 
-	logger.Infof("Rollbacking block index to block number [%d]", targetBlockNum)
+	logger.Infof("Rolling back block index to block number [%d]", targetBlockNum)
 	if err := r.rollbackBlockIndex(); err != nil {
 		return err
 	}
 
-	logger.Infof("Rollbacking block files to block number [%d]", targetBlockNum)
+	logger.Infof("Rolling back block files to block number [%d]", targetBlockNum)
 	if err := r.rollbackBlockFiles(); err != nil {
 		return err
 	}
@@ -144,6 +144,14 @@ func populateBlockInfoWithDuplicateTxids(blockInfo *serializedBlockInfo, placeme
 
 	for _, txOffset := range blockInfo.txOffsets {
 		blockLoc, err := indexStore.getBlockLocByTxID(txOffset.txID)
+		// There is a situations where the txid entries for a config transaction may not present in the index. This is caused
+		// by the fact that in the data produced by a release proior to 1.4.2, the txID for a config transaction is used as
+		// an empty string. However, in the data produced by release 1.4.2 (and up), the real txID is used by computing in the
+		// indexing code. So, a mismatch is possible where the generated txID is not present in the index
+		if err == blkstorage.ErrNotFoundInIndex {
+			logger.Warnf("TxID [%s] not found in index... skipping this TxID", txOffset.txID)
+			continue
+		}
 		if err != nil {
 			return err
 		}

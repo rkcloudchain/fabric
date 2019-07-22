@@ -7,11 +7,20 @@ package kvledger
 
 import (
 	"github.com/hyperledger/fabric/common/ledger/blkstorage/fsblkstorage"
+	"github.com/hyperledger/fabric/common/ledger/util/leveldbhelper"
 	"github.com/hyperledger/fabric/core/ledger/ledgerconfig"
+	"github.com/pkg/errors"
 )
 
 // ResetAllKVLedgers resets all ledger to the genesis block.
 func ResetAllKVLedgers() error {
+	fileLock := leveldbhelper.NewFileLock(ledgerconfig.GetFileLockPath())
+	if err := fileLock.Lock(); err != nil {
+		return errors.Wrap(err, "as another peer node command is executing,"+
+			" wait for that command to complete its execution or terminate it before retrying")
+	}
+	defer fileLock.Unlock()
+
 	logger.Info("Resetting all ledgers to genesis block")
 	ledgerDataFolder := ledgerconfig.GetRootPath()
 	logger.Infof("Ledger data folder from config = [%s]", ledgerDataFolder)
@@ -23,7 +32,7 @@ func ResetAllKVLedgers() error {
 	if err := resetBlockStorage(); err != nil {
 		return err
 	}
-	logger.Info("Done!")
+	logger.Info("All channel ledgers have been successfully reset to the genesis block")
 	return nil
 }
 
